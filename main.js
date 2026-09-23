@@ -413,10 +413,24 @@ function hash53(text) {
   return (4294967296 * (2097151 & h2) + (h1 >>> 0)).toString(36);
 }
 
+// Props minus what a device writes for itself. Automations keeps a run log
+// in the project's props, rewritten on each device on its own; counted as
+// content, two devices that both ran a check looked like a conflicting edit
+// and one of them made a conflict copy every sync cycle.
+function userProps(props) {
+  if (typeof props !== "string" || !props.includes("_automationLog")) return props;
+  try {
+    const { _automationLog, ...rest } = JSON.parse(props);
+    return JSON.stringify(rest);
+  } catch {
+    return props;
+  }
+}
+
 /** What a user would call "the object's content" -- everything but the clock. */
 export function objectHash(object) {
   return hash53(JSON.stringify([
-    object.type, object.title, object.content, object.props,
+    object.type, object.title, object.content, userProps(object.props),
     object.archived_at ?? null, object.trashed_at ?? null, object.parent_id ?? null,
   ]));
 }
@@ -1421,7 +1435,7 @@ export default {
   manifest: {
     id: "notible.sync.simple",
     name: "Notible Sync Simple",
-    version: "0.5.3",
+    version: "0.5.4",
     apiVersion: "1.7",
     description: "Replicate this workspace between your own machines through your own Google Drive, with no device pairing: the encryption key is kept on your Drive, so anyone who signs in to that Google account can read and overwrite the workspace. Convenience over privacy. Use \"Notible Sync\" instead if you want the key to stay on your devices.",
     author: "Notible",
