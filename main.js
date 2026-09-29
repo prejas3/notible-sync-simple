@@ -794,6 +794,8 @@ class Google {
 
 // ------------------------------------------------------------------ the sync
 
+const plural = (count, word) => `${count} ${word}${count === 1 ? "" : "s"}`;
+
 class Sync {
   constructor(context) {
     this.context = context;
@@ -814,8 +816,9 @@ class Sync {
     return () => this.listeners.delete(listener);
   }
 
-  setStatus(state, text) {
-    this.status = { state, text };
+  /** `notes` are the per-note details, shown folded under the one-line text. */
+  setStatus(state, text, notes = []) {
+    this.status = { state, text, notes };
     for (const listener of this.listeners) listener(this.status);
   }
 
@@ -1014,15 +1017,17 @@ class Sync {
       }
 
       this.context.storage.set("lastSync", Date.now());
+      // One short line; every per-note sentence goes to `notes`, which the
+      // panel folds away. Joined into this line they grew to a wall of text.
       const detail = [
-        `${pulled} change(s) in`,
-        conflicts ? `${conflicts} edited on both devices` : null,
-        pushed ? `${fresh.objects.length} object(s) out` : "nothing new to send",
-        media.pulled ? `${media.pulled} image(s) in` : null,
-        media.pushed ? `${media.pushed} image(s) out` : null,
-        skipped ? `${skipped} held back (note is open)` : null,
-      ].filter(Boolean).join(", ");
-      this.setStatus("ok", `${detail}.${notes.length ? ` ${notes.join(" ")}` : ""}`);
+        pulled ? plural(pulled, "change") + " received" : null,
+        pushed ? "this device's changes sent" : null,
+        conflicts ? `${plural(conflicts, "note")} edited on both devices` : null,
+        media.pulled ? plural(media.pulled, "image") + " received" : null,
+        media.pushed ? plural(media.pushed, "image") + " sent" : null,
+        skipped ? `${skipped} held back until you close the open note` : null,
+      ].filter(Boolean).join(" · ");
+      this.setStatus("ok", detail || "Nothing new on either side", notes);
       return { pulled, skipped, notes, media, pushed, conflicts };
     } catch (error) {
       this.setStatus("error", error.message || String(error));
@@ -1038,37 +1043,35 @@ class Sync {
 const styles = `
 /*
  * Written on the PUBLIC token contract (--notible-*), with no colour literals
- * anywhere. The previous version fell back to its own hexes — including a
- * green accent — so on any host that had not defined the deprecated
- * unprefixed aliases this panel rendered in colours Notible does not own.
+ * anywhere. The visual rules are the app's: an outline instead of a fill, no
+ * coloured ribbon, no card-inside-a-card, and no title (the settings
+ * navigation already names this screen).
  *
- * The visual rules are the app's: an outline instead of a fill, no coloured
- * ribbon, no card-inside-a-card, and no title (the settings navigation
- * already names this screen).
+ * Layout: the part used every day (status, the button, the result) on top;
+ * everything set once below it, folded to one row each with its state on the
+ * right. The old numbered 01-04 setup read as a wizard long after setup was
+ * done.
  */
 .nsync {
   display: grid;
-  gap: 14px;
+  gap: 20px;
   max-width: 100%;
   color: var(--notible-text);
 }
-.nsync-shell { display: grid; gap: 12px; }
-/* Each step is a disclosure: finished setup collapses to its header, the
-   parts you actually use stay open. Header doubles as the summary. */
-.nsync-step > summary { list-style: none; cursor: pointer; }
-.nsync-step > summary::-webkit-details-marker { display: none; }
-.nsync-step > summary::after { content: "\\25B8"; margin-left: 8px; color: var(--notible-faint); font-size: 11px; }
-.nsync-step[open] > summary::after { content: "\\25BE"; }
-.nsync-step:not([open]) { gap: 0; }
-.nsync-lead { margin: 0; max-width: 66ch; color: var(--notible-muted); font-size: 13px; line-height: 1.55; }
+.nsync-lead { margin: 0; max-width: 62ch; color: var(--notible-muted); font-size: 13px; line-height: 1.55; }
+.nsync-now {
+  display: grid;
+  gap: 14px;
+  padding-bottom: 20px;
+  border-bottom: 1px solid var(--notible-border);
+}
 .nsync-summary {
   display: flex;
   align-items: center;
   gap: 9px;
-  padding-bottom: 10px;
-  border-bottom: 1px solid var(--notible-border);
   color: var(--notible-muted);
-  font-size: 12px;
+  font-size: 13px;
+  font-weight: 600;
 }
 .nsync-summary__dot {
   width: 8px;
@@ -1077,45 +1080,54 @@ const styles = `
   border-radius: 50%;
   background: var(--notible-border);
 }
-/* Three states, three colours, all from the public contract: --notible-success
-  is Notible's own muted sage — a healthy sync should read as calm, not as a
-   traffic light. Work in progress borrows the accent; trouble is the same red
-   the rest of the app uses for it. */
+/* --notible-success is Notible's own muted sage: a healthy sync reads as
+   calm, not as a traffic light. Work in progress borrows the accent; trouble
+   is the same red the rest of the app uses for it. */
 .nsync-summary[data-state="ok"] { color: var(--notible-success); }
 .nsync-summary[data-state="busy"] { color: var(--notible-accent); }
 .nsync-summary[data-state="error"] { color: var(--notible-danger); }
 .nsync-summary[data-state="ok"] .nsync-summary__dot { background: var(--notible-success); }
 .nsync-summary[data-state="busy"] .nsync-summary__dot { background: var(--notible-accent); }
 .nsync-summary[data-state="error"] .nsync-summary__dot { background: var(--notible-danger); }
-.nsync-body { display: grid; }
-/* No card per step — a hairline between rows, the way Core's own settings
-   list reads. The disclosure chevron and the status word share the right
-   edge so every step lines up on one vertical rule. */
-.nsync-step {
+.nsync-now__row { display: flex; align-items: center; gap: 16px; flex-wrap: wrap; }
+.nsync .status { max-width: 90ch; margin: 0; color: var(--notible-muted); font-size: 12px; line-height: 1.5; }
+.nsync .status:empty { display: none; }
+.nsync .status[data-state="error"] { color: var(--notible-danger); }
+.nsync-details > summary { width: fit-content; cursor: pointer; color: var(--notible-faint); font-size: 12px; }
+.nsync-details ul {
   display: grid;
-  gap: 10px;
-  padding: 13px 0;
+  gap: 4px;
+  max-height: 240px;
+  margin: 8px 0 0;
+  padding-left: 18px;
+  overflow: auto;
+  color: var(--notible-muted);
+  font-size: 12px;
+  line-height: 1.5;
+}
+.nsync-rows { display: grid; }
+/* No card per row: a hairline between rows, the way Core's own settings list
+   reads. Chevron and state share the right edge. */
+.nsync-step {
+  padding: 14px 0;
   border-top: 1px solid var(--notible-border-subtle, var(--notible-border));
 }
-.nsync-step:first-of-type { border-top: 0; }
-.nsync-step__header {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-}
-.nsync-step__heading { display: flex; align-items: baseline; gap: 9px; min-width: 0; }
-.nsync-step > summary::after { margin-left: 2px; }
-/* The step number orders the setup; it is not decoration, so it stays quiet
-   rather than wearing the accent colour. */
-.nsync-step__number { color: var(--notible-faint); font-size: 11px; font-variant-numeric: tabular-nums; }
-.nsync-step h4 { margin: 0; color: var(--notible-text); font-size: 14px; line-height: 1.2; }
-.nsync-step__badge { flex: 0 0 auto; margin-left: auto; color: var(--notible-muted); font-size: 11px; }
-.nsync-step p { max-width: 66ch; margin: 0; color: var(--notible-muted); font-size: 12px; line-height: 1.55; }
-.nsync-actions,
-.nsync-row { display: flex; align-items: center; gap: 9px; flex-wrap: wrap; }
+.nsync-step:first-child { border-top: 0; padding-top: 0; }
+.nsync-step[open] { padding-bottom: 20px; }
+.nsync-step > summary { display: flex; align-items: center; gap: 10px; list-style: none; cursor: pointer; }
+.nsync-step > summary::-webkit-details-marker { display: none; }
+.nsync-step > summary::after { content: "\\25B8"; margin-left: 2px; color: var(--notible-faint); font-size: 11px; }
+.nsync-step[open] > summary::after { content: "\\25BE"; }
+/* <details> ignores grid/gap on its content in Chromium, hence a body. */
+.nsync-step__body { display: grid; gap: 14px; padding-top: 14px; }
+.nsync-warning .nsync-step__body { gap: 8px; padding-top: 8px; }
+.nsync-step h4 { margin: 0; color: var(--notible-text); font-size: 13px; font-weight: 600; line-height: 1.2; }
+.nsync-step__badge { flex: 0 0 auto; margin-left: auto; color: var(--notible-muted); font-size: 12px; }
+.nsync p { max-width: 76ch; margin: 0; color: var(--notible-muted); font-size: 12px; line-height: 1.55; }
+.nsync-actions { display: flex; align-items: center; gap: 9px; flex-wrap: wrap; margin-top: 2px; }
 .nsync button {
   min-height: 32px;
-  padding: 6px 11px;
+  padding: 6px 12px;
   border: 1px solid var(--notible-border);
   border-radius: 7px;
   background: transparent;
@@ -1127,7 +1139,8 @@ const styles = `
 }
 .nsync button:hover:not(:disabled) { border-color: var(--notible-accent); background: var(--notible-hover); }
 .nsync button:focus-visible,
-.nsync input:focus-visible { outline: 2px solid var(--notible-accent); outline-offset: 2px; }
+.nsync input:focus-visible,
+.nsync summary:focus-visible { outline: 2px solid var(--notible-accent); outline-offset: 2px; }
 .nsync button:disabled { cursor: not-allowed; opacity: .46; }
 .nsync .nsync-button--primary {
   border-color: var(--notible-accent);
@@ -1138,16 +1151,10 @@ const styles = `
 .nsync .nsync-button--primary:hover:not(:disabled) { border-color: var(--notible-accent-hover); background: var(--notible-accent-hover); }
 .nsync .nsync-button--danger { border-color: var(--notible-border); color: var(--notible-danger); }
 .nsync .nsync-button--danger:hover:not(:disabled) { border-color: var(--notible-danger); background: var(--notible-danger-surface); }
-.nsync code {
-  font-family: ui-monospace, SFMono-Regular, Consolas, monospace;
-  font-size: 12px;
-  letter-spacing: .045em;
-  word-break: break-all;
-}
-
 .nsync input:not([type="checkbox"]) {
+  box-sizing: border-box;
   min-width: 0;
-  min-height: 32px;
+  height: 32px;
   padding: 6px 9px;
   border: 1px solid var(--notible-border);
   border-radius: 7px;
@@ -1156,7 +1163,7 @@ const styles = `
   font: inherit;
   font-size: 12px;
 }
-.nsync input[type="number"] { width: 70px; text-align: center; font-variant-numeric: tabular-nums; }
+.nsync input[type="number"] { width: 64px; text-align: center; font-variant-numeric: tabular-nums; }
 .nsync input[type="checkbox"] {
   width: 18px;
   height: 18px;
@@ -1164,271 +1171,233 @@ const styles = `
   margin: 0;
   accent-color: var(--notible-accent);
 }
-.nsync-schedule {
-  display: grid;
-  grid-template-columns: auto minmax(0, 1fr) auto auto;
-  align-items: center;
-  gap: 9px;
-  color: var(--notible-muted);
-  font-size: 12px;
-}
-.nsync-schedule__label { min-width: 0; }
-.nsync-status { display: grid; gap: 4px; }
-.nsync .status { margin: 0; color: var(--notible-muted); font-size: 12px; line-height: 1.45; }
-.nsync .status[data-state="busy"],
-.nsync .status[data-state="ok"] { color: var(--notible-accent); }
-.nsync .status[data-state="error"],
-.nsync-error { color: var(--notible-danger); }
-.nsync-error { min-height: 1em; }
-/* No frame: one red line always visible, the full cost one disclosure away.
-   A warning, not a poster. */
-.nsync-warning { display: grid; gap: 6px; }
-.nsync-warning > summary { list-style: none; cursor: pointer; color: var(--notible-danger); font-size: 12px; font-weight: 600; }
-.nsync-warning > summary::-webkit-details-marker { display: none; }
-.nsync-warning > summary::after { content: " — what this means \\25B8"; font-weight: 400; color: var(--notible-faint); }
-.nsync-warning[open] > summary::after { content: " — what this means \\25BE"; }
-.nsync-warning strong { color: var(--notible-danger); }
-.nsync-hint { color: var(--notible-faint) !important; font-size: 11px !important; }
-.nsync-devices { display: grid; gap: 6px; margin-top: 12px; }
+.nsync-schedule { display: flex; align-items: center; gap: 9px; flex-wrap: wrap; color: var(--notible-text); font-size: 12px; }
+.nsync-field { display: grid; gap: 6px; }
+.nsync-field label { color: var(--notible-muted); font-size: 12px; }
 .nsync-device-name { max-width: 260px; }
-.nsync-peers { margin: 0; padding-left: 18px; font-size: 12px; }
-@media (max-width: 520px) {
-  .nsync-schedule { grid-template-columns: auto minmax(0, 1fr); }
-  .nsync-schedule__interval,
-  .nsync-schedule__suffix { grid-column: 2; }
-}
+.nsync-peers { display: grid; gap: 4px; margin: 0; padding-left: 18px; color: var(--notible-text); font-size: 12px; }
+.nsync-hint { color: var(--notible-faint) !important; font-size: 11px !important; }
+/* One red line always visible, the full cost one disclosure away. */
+.nsync-warning > summary { width: fit-content; cursor: pointer; color: var(--notible-danger); font-size: 12px; font-weight: 600; }
+.nsync-warning > summary::after { content: " — what this means"; font-weight: 400; color: var(--notible-faint); }
 `;
 
 function element(tag, properties = {}, children = []) {
   const node = Object.assign(document.createElement(tag), properties);
-  for (const child of children) node.append(child);
+  for (const child of children) if (child) node.append(child);
   return node;
+}
+
+/** "15:42" today, "29 Sept 2026, 15:42" otherwise. */
+function when(timestamp) {
+  const date = new Date(timestamp);
+  return date.toDateString() === new Date().toDateString()
+    ? date.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })
+    : date.toLocaleString([], { dateStyle: "medium", timeStyle: "short" });
 }
 
 function mountPanel(sync, container) {
   const root = element("div", { className: "nsync" });
   root.append(element("style", { textContent: styles }));
-  const shell = element("div", { className: "nsync-shell" });
-  shell.append(element("p", { className: "nsync-lead", textContent: "Keeps this workspace in step across your devices through your own Google Drive. Nothing leaves this machine unencrypted." }));
+  root.append(element("p", { className: "nsync-lead", textContent: "Keeps this workspace the same on all your devices, through your own Google Drive. Everything is encrypted before it leaves this device." }));
 
-  const status = element("div", { className: "status" });
+  // --- the everyday part: state, the one button, the result. Built once and
+  // repainted by `paint`, so a sync finishing never rebuilds what you touch.
+  const summaryText = element("span", {});
+  const summary = element("div", { className: "nsync-summary" }, [element("span", { className: "nsync-summary__dot" }), summaryText]);
+  const status = element("p", { className: "status" });
   status.setAttribute("role", "status");
   status.setAttribute("aria-live", "polite");
-  const summaryText = element("span", {});
-  const summary = element("div", { className: "nsync-summary" }, [
-    element("span", { className: "nsync-summary__dot" }),
-    summaryText,
-  ]);
-  shell.append(summary);
-  // This device's name and every other device's last upload -- the answer
-  // to "did the other machine actually send it?", which the status line alone
-  // could not give. Lives outside render() like `status`, repainted with it.
-  const devices = element("div", { className: "nsync-devices" });
+  const detailsList = element("ul", {});
+  const detailsLabel = element("summary", {});
+  const details = element("details", { className: "nsync-details" }, [detailsLabel, detailsList]);
+  const now = element("button", { className: "nsync-button--primary", type: "button", textContent: "Synchronise now" });
+  now.onclick = async () => {
+    now.disabled = true;
+    try { await sync.run(); } catch { /* status already shows it */ } finally { paint(sync.status); }
+  };
+  const signIn = element("button", { className: "nsync-button--primary", type: "button", textContent: "Sign in with Google" });
+  signIn.onclick = async () => {
+    signIn.disabled = true;
+    status.dataset.state = "busy";
+    status.textContent = "Finish signing in in your browser, then come back here.";
+    try {
+      await sync.google.signIn();
+      status.textContent = "";
+      render();
+      sync.run().catch(() => {});
+    } catch (error) {
+      status.dataset.state = "error";
+      status.textContent = error.message;
+    } finally {
+      signIn.disabled = false;
+    }
+  };
+  const nowRow = element("div", { className: "nsync-now__row" });
+  root.append(element("section", { className: "nsync-now" }, [summary, nowRow, status, details]));
+
+  // This device's name and every other device's last upload -- the answer to
+  // "did the other machine actually send it?". Kept outside render() so an
+  // automatic sync finishing never throws away a name being typed.
   const nameInput = element("input", {
+    id: "nsync-device-name",
     className: "nsync-device-name",
     type: "text",
     maxLength: 80,
     placeholder: "e.g. Work laptop",
     value: sync.deviceName(),
   });
-  nameInput.onchange = () => { sync.context.storage.set("deviceName", nameInput.value.trim()); };
   const peerList = element("ul", { className: "nsync-peers" });
-  devices.append(
-    element("label", { className: "nsync-hint", textContent: "This device is called" }),
-    nameInput,
-    element("p", { className: "nsync-hint", textContent: "Other devices — when each last sent its changes:" }),
-    peerList,
-  );
-  const paintPeers = () => {
-    const peers = Object.entries(sync.context.storage.get("peers") ?? {});
-    peerList.replaceChildren(...(peers.length
-      ? peers
+  const devicesBody = [
+    element("div", { className: "nsync-field" }, [
+      element("label", { htmlFor: "nsync-device-name", textContent: "This device" }),
+      nameInput,
+      element("p", { className: "nsync-hint", textContent: "Your other devices show it under this name." }),
+    ]),
+    element("div", { className: "nsync-field" }, [element("label", { textContent: "Other devices, and when each last sent its changes" }), peerList]),
+  ];
+  const peers = () => Object.entries(sync.context.storage.get("peers") ?? {});
+  const devicesBadgeText = () => {
+    const others = peers().length;
+    return `${sync.deviceName() || "This device"}${others ? ` + ${others} other${others === 1 ? "" : "s"}` : ""}`;
+  };
+  const badges = {};
+  nameInput.onchange = () => {
+    sync.context.storage.set("deviceName", nameInput.value.trim());
+    if (badges.devices) badges.devices.textContent = devicesBadgeText();
+  };
+
+  const paint = ({ state, text, notes = [] }) => {
+    const ready = sync.google.signedIn();
+    const lastSync = sync.context.storage.get("lastSync");
+    summary.dataset.state = ready ? state : "idle";
+    summaryText.textContent = !ready
+      ? "Not set up"
+      : state === "busy" ? "Synchronising…"
+        : state === "error" ? "Sync failed"
+          : lastSync ? `Synced · ${when(lastSync)}` : "Not synchronised yet";
+    now.disabled = !ready || state === "busy";
+    if (ready) {
+      status.dataset.state = state;
+      status.textContent = state === "ok" || state === "error"
+        ? text
+        : state === "idle" && !lastSync
+          ? "The first run uploads this device’s workspace and downloads the others. Nothing is merged or deleted automatically."
+          : "";
+    }
+    details.hidden = !ready || !notes.length;
+    detailsLabel.textContent = `Details (${notes.length})`;
+    detailsList.replaceChildren(...notes.map((note) => element("li", { textContent: note })));
+
+    const list = peers();
+    peerList.replaceChildren(...(list.length
+      ? list
         .sort((a, b) => (b[1].writtenAt ?? 0) - (a[1].writtenAt ?? 0))
         .map(([id, peer]) => element("li", {
-          textContent: `${peer.name || `Unnamed device (${id.slice(0, 6)})`}: ${peer.writtenAt ? new Date(peer.writtenAt).toLocaleString() : "unknown (older plugin version)"}`,
+          textContent: `${peer.name || `Unnamed device · ${id.slice(0, 6)}`} — ${peer.writtenAt ? when(peer.writtenAt) : "unknown (older plugin version)"}`,
         }))
       : [element("li", { className: "nsync-hint", textContent: "None seen yet." })]));
+    if (badges.devices) badges.devices.textContent = devicesBadgeText();
+    if (badges.key) badges.key.textContent = sync.context.storage.get("key") ? "Kept on your Drive" : "Created on first sync";
   };
 
-  const paint = ({ state, text }) => {
-    paintPeers();
-    status.dataset.state = state;
-    const lastSync = sync.context.storage.get("lastSync");
-    status.textContent = state === "idle" && lastSync
-      ? `Last synced ${new Date(lastSync).toLocaleString()}`
-      : text;
-    summary.dataset.state = state;
-    summaryText.textContent = ({ idle: "Ready when setup is complete", busy: "Synchronising", ok: "Synced", error: "Needs attention" })[state] ?? "Notible Sync Simple";
-  };
-  const stopWatching = sync.onStatus(paint);
-  paint(sync.status);
-
-  // Steps are collapsed by default and only stay open if the user opens
-  // them. `render()` rebuilds every <details> from scratch, so the open set
-  // has to live out here to survive a re-render.
+  // Rows are folded by default and remember being opened across re-renders.
   const openSteps = new Set();
-  const stepDetails = (step, { primary } = {}) => {
-    const details = element("details", { className: "nsync-step", open: openSteps.has(step) });
-    details.dataset.step = step;
-    if (primary) details.dataset.primary = "true";
-    details.addEventListener("toggle", () => { details.open ? openSteps.add(step) : openSteps.delete(step); });
-    return details;
+  const row = (id, title, badge) => {
+    const node = element("details", { className: "nsync-step", open: openSteps.has(id) });
+    node.addEventListener("toggle", () => { node.open ? openSteps.add(id) : openSteps.delete(id); });
+    const badgeNode = element("span", { className: "nsync-step__badge", textContent: badge });
+    const body = element("div", { className: "nsync-step__body" });
+    node.append(element("summary", {}, [element("h4", { textContent: title }), badgeNode]), body);
+    return [node, badgeNode, body];
   };
+
+  const rows = element("div", { className: "nsync-rows" });
+  root.append(rows);
 
   const render = () => {
-    body.replaceChildren();
     const signedIn = sync.google.signedIn();
-    // No pairing step: signing in IS the setup. The key is fetched from the
-    // Drive folder on the first run, or created there if it is not there yet.
-    const hasKey = Boolean(sync.context.storage.get("key"));
-    const ready = signedIn;
-    summary.dataset.setup = ready ? "ready" : "incomplete";
-    if (sync.status.state === "idle") {
-      summaryText.textContent = ready ? "Ready to synchronise" : "Complete setup to begin";
+    nowRow.replaceChildren(signedIn ? now : signIn);
+    if (!signedIn) {
+      status.dataset.state = "idle";
+      status.textContent = "Snapshots are encrypted before they leave this device, with a key kept in a folder on the same Drive.";
     }
+    rows.replaceChildren();
 
-    // --- account
-    const account = element("details", { className: "nsync-step", "data-step": "1", open: !signedIn });
-    account.append(element("summary", { className: "nsync-step__header" }, [
-      element("div", { className: "nsync-step__heading" }, [
-        element("span", { className: "nsync-step__number", textContent: "01" }),
-        element("h4", { textContent: "Google account" }),
-      ]),
-      element("span", { className: "nsync-step__badge", textContent: signedIn ? "Connected" : "Not connected" }),
-    ]));
     if (signedIn) {
+      const [accountRow, , account] = row("account", "Google account", "Connected");
       const out = element("button", { className: "nsync-button--danger", type: "button", textContent: "Sign out and revoke access" });
-      out.onclick = async () => { await sync.google.signOut(); render(); };
+      out.onclick = async () => { await sync.google.signOut(); render(); paint(sync.status); };
       account.append(
         element("p", {
-          textContent: `Snapshots live in a visible “${FOLDER_NAME}” folder on your Drive.`,
-          title: `Pasted images go in its “media” subfolder, and only travel while Settings → Files & links → “Let plugins read pasted images” is on. Notes sync either way.`,
+          textContent: `Snapshots are kept in the “${FOLDER_NAME}” folder on your Drive.`,
+          title: "Pasted images go in its “media” subfolder, and only travel while Settings → Files & links → “Let plugins read pasted images” is on. Notes sync either way.",
         }),
         element("div", { className: "nsync-actions" }, [out]),
       );
+      rows.append(accountRow);
+
+      const [devicesRow, devicesBadge, devices] = row("devices", "Devices", devicesBadgeText());
+      badges.devices = devicesBadge;
+      devices.append(...devicesBody);
+      rows.append(devicesRow);
     } else {
-      const button = element("button", { className: "nsync-button--primary", type: "button", textContent: "Sign in with Google" });
-      const hint = element("p", { className: "nsync-hint", textContent: "Snapshots are encrypted before they leave this device — with a key kept on this same Drive account. See below." });
-      button.onclick = async () => {
-        button.disabled = true;
-        const original = hint.textContent;
-        hint.textContent = "Finish signing in in your browser, then come back here.";
-        try {
-          await sync.google.signIn();
-          render();
-        } catch (error) {
-          hint.textContent = error.message;
-        } finally {
-          button.disabled = false;
-          if (hint.textContent.startsWith("Finish signing in")) hint.textContent = original;
-        }
-      };
-      account.append(element("div", { className: "nsync-actions" }, [button]), hint);
+      badges.devices = null;
     }
-    body.append(account);
 
-    // --- the price of this mode
-    //
-    // Permanent, not a one-off confirmation. "Does not protect" must never
-    // look like "protects", so whenever this section is open it states the
-    // whole cost, whether or not the key has been fetched yet. Collapsed by
-    // default like every other step (per user request); the summary line
-    // still names it "Encryption key" so it is not missable.
-    const price = stepDetails("2");
-    price.append(element("summary", { className: "nsync-step__header" }, [
-      element("div", { className: "nsync-step__heading" }, [
-        element("span", { className: "nsync-step__number", textContent: "02" }),
-        element("h4", { textContent: "Encryption key" }),
-      ]),
-      element("span", { className: "nsync-step__badge", textContent: hasKey ? "On your Drive" : "Created on first run" }),
-    ]));
-    const warning = element("details", { className: "nsync-warning" });
-    warning.append(
-      element("summary", {}, [element("strong", { textContent: "This mode does not protect your notes from anyone who can open this Google account." })]),
-      element("p", { textContent: "Anyone who signs in — Google included — has exactly what your devices have. They can read your notes, add to them, roll your edits back, and permanently delete notes on every device, with no copy left on the other machine to restore from. This covers the snapshots already on your Drive." }),
-      element("p", { textContent: "Uninstalling does not undo it: a key that has been on Drive stays in the trash, in version history, and on every device that fetched it." }),
-      element("p", { textContent: "Notible has no server and sees nothing. That is not a consolation: the trust moved to Google, it was not removed." }),
-    );
-    price.append(
-      element("p", { textContent: `The key is kept in the “${FOLDER_NAME}” folder on your Drive, next to the snapshots, so every device signed in to this Google account synchronises with no setup.` }),
-      warning,
-      element("p", { className: "nsync-hint", textContent: "Want the key to stay on your own devices? Install “Notible Sync” instead — it pairs devices with a key you carry across yourself." }),
-    );
-    body.append(price);
-    // --- run
-    const runState = sync.status.state === "busy"
-      ? "Working"
-      : sync.status.state === "error"
-        ? "Needs attention"
-        : ready
-          ? sync.status.state === "ok" ? "Up to date" : "Ready"
-          : "Locked";
-    const run = stepDetails("3", { primary: true });
-    run.append(element("summary", { className: "nsync-step__header" }, [
-      element("div", { className: "nsync-step__heading" }, [
-        element("span", { className: "nsync-step__number", textContent: "03" }),
-        element("h4", { textContent: "Synchronise" }),
-      ]),
-      element("span", { className: "nsync-step__badge", textContent: runState }),
-    ]));
-    const now = element("button", { className: "nsync-button--primary", type: "button", textContent: "Synchronise now", disabled: !ready });
-    now.onclick = async () => {
-      now.disabled = true;
-      try { await sync.run(); } catch { /* status already shows it */ } finally { now.disabled = false; }
-    };
-    run.append(
-      element("p", {
-        textContent: "The first run uploads this device’s workspace and downloads the others. Nothing is merged or deleted automatically.",
-        title: "Pasted images travel too, but only while Settings → Files & links → “Let plugins read pasted images” is on. Notes sync either way.",
-      }),
-      element("div", { className: "nsync-actions" }, [now]),
-      element("div", { className: "nsync-status" }, [
-        status,
-        devices,
-        !ready ? element("p", { className: "nsync-hint", textContent: "Connect Google Drive to enable synchronisation." }) : null,
-      ].filter(Boolean)),
-    );
-    body.append(run);
-
-    // --- automatic
-    const auto = stepDetails("4");
-    auto.append(element("summary", { className: "nsync-step__header" }, [
-      element("div", { className: "nsync-step__heading" }, [
-        element("span", { className: "nsync-step__number", textContent: "04" }),
-        element("h4", { textContent: "Automatic synchronisation" }),
-      ]),
-      element("span", { className: "nsync-step__badge", textContent: "Optional" }),
-    ]));
+    const [autoRow, autoBadge, auto] = row("auto", "Automatic sync", "");
     const toggle = element("input", { id: "nsync-auto-toggle", type: "checkbox", checked: sync.context.storage.get("auto") ?? true });
     const every = element("input", {
-      className: "nsync-schedule__interval",
       type: "number", min: "1", max: "1440", inputmode: "numeric",
       value: String(sync.context.storage.get("intervalMinutes") ?? DEFAULT_INTERVAL_MINUTES),
     });
-    every.disabled = !toggle.checked;
+    const paintAuto = () => {
+      every.disabled = !toggle.checked;
+      autoBadge.textContent = toggle.checked ? `Every ${sync.context.storage.get("intervalMinutes") ?? DEFAULT_INTERVAL_MINUTES} min` : "Off";
+    };
     const persist = () => {
       sync.context.storage.set("auto", toggle.checked);
       sync.context.storage.set("intervalMinutes", Math.min(1440, Math.max(1, Number(every.value) || DEFAULT_INTERVAL_MINUTES)));
-      every.disabled = !toggle.checked;
+      every.value = String(sync.context.storage.get("intervalMinutes"));
+      paintAuto();
       sync.onScheduleChanged?.();
     };
     toggle.onchange = persist;
     every.onchange = persist;
+    paintAuto();
     auto.append(
       element("div", { className: "nsync-schedule" }, [
         toggle,
-        element("label", { className: "nsync-schedule__label", htmlFor: "nsync-auto-toggle", textContent: "Synchronise automatically, and at least every" }),
+        element("label", { htmlFor: "nsync-auto-toggle", textContent: "Synchronise automatically, at least every" }),
         every,
-        element("span", { className: "nsync-schedule__suffix", textContent: "minutes" }),
+        element("span", { textContent: "minutes" }),
       ]),
-      element("p", { className: "nsync-hint", textContent: "On by default: also runs when Notible starts and about a minute after you change something. Each run contacts Google." }),
+      element("p", { className: "nsync-hint", textContent: "Also runs when Notible starts and a minute after you change something." }),
     );
-    body.append(auto);
+    rows.append(autoRow);
+
+    // The price of this mode. Folded like every row (per user request), but
+    // whenever it is open it states the whole cost, and the red line is the
+    // first thing in it, so "does not protect" never reads as "protects".
+    const [priceRow, keyBadge, price] = row("key", "Encryption key", "");
+    badges.key = keyBadge;
+    const warning = element("details", { className: "nsync-warning" });
+    warning.append(
+      element("summary", { textContent: "This does not protect your notes from anyone who can open this Google account." }),
+      element("div", { className: "nsync-step__body" }, [element("p", { textContent: "Anyone who signs in — Google included — has exactly what your devices have. They can read your notes, add to them, roll your edits back, and permanently delete notes on every device, with no copy left on the other machine to restore from. This covers the snapshots already on your Drive." }),
+      element("p", { textContent: "Uninstalling does not undo it: a key that has been on Drive stays in the trash, in version history, and on every device that fetched it. Notible has no server and sees nothing, so the trust moved to Google; it was not removed." }),
+      element("p", { textContent: "Want the key to stay on your own devices? Install “Notible Sync” instead: it pairs devices with a key you carry across yourself." }),
+      ]),
+    );
+    price.append(
+      warning,
+      element("p", { textContent: "The key sits next to the snapshots, so any device signed in to this Google account synchronises with no setup." }),
+    );
+    rows.append(priceRow);
+    paint(sync.status);
   };
 
-  const body = element("div", { className: "nsync-body" });
-  shell.append(body);
-  root.append(shell);
+  const stopWatching = sync.onStatus(paint);
   render();
   container.append(root);
   return { dispose: () => { stopWatching(); root.remove(); } };
@@ -1444,7 +1413,7 @@ export default {
   manifest: {
     id: "notible.sync.simple",
     name: "Notible Sync Simple",
-    version: "0.5.5",
+    version: "0.5.6",
     apiVersion: "1.7",
     description: "Replicate this workspace between your own machines through your own Google Drive, with no device pairing: the encryption key is kept on your Drive, so anyone who signs in to that Google account can read and overwrite the workspace. Convenience over privacy. Use \"Notible Sync\" instead if you want the key to stay on your devices.",
     author: "Notible",
