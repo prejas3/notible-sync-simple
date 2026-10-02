@@ -1413,9 +1413,9 @@ export default {
   manifest: {
     id: "notible.sync.simple",
     name: "Notible Sync Simple",
-    version: "0.5.6",
+    version: "0.5.7",
     apiVersion: "1.7",
-    description: "Replicate this workspace between your own machines through your own Google Drive, with no device pairing: the encryption key is kept on your Drive, so anyone who signs in to that Google account can read and overwrite the workspace. Convenience over privacy. Use \"Notible Sync\" instead if you want the key to stay on your devices.",
+    description: "Keep this workspace the same on your own computers through Google Drive, without pairing them. The key is kept on your Drive, so anyone who can sign in to that Google account can read the workspace.",
     author: "Notible",
     permissions: ["data.sync", "data.read", "workspace.ui", "network"],
   },
@@ -1444,7 +1444,7 @@ export default {
 
     this._disposables.push(context.commands.register({
       id: "now",
-      name: "Sync: synchronise now",
+      name: "Simple Sync: sync now",
       description: "Push this device's snapshot and take in the others.",
       execute: () => sync.run(),
     }));
