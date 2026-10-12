@@ -30,6 +30,26 @@
  * them under plain node; the plugin itself is the default export.
  */
 
+// I18N (Hive #28): every UI string goes through t(); Polish is in
+// locales/pl.json (checked by scripts/plugin-locale-check.mjs). English until
+// onload() hands t over to Core's translator, which also follows a language
+// change. tr() only marks a module-level label that is passed to t() later.
+let t = (key, values) => (values ? key.replace(/\{(\w+)\}/g, (whole, name) => (name in values ? String(values[name]) : whole)) : key);
+
+// I18N (Hive #55): text for a count. An `extra` key ("...#few") exists only in
+// locale files, so English never shows it; an untranslated one falls back to one/other.
+export const pluralText = (t, forms, count, locale, values) => {
+  const category = new Intl.PluralRules(locale || "en").select(count);
+  const extra = forms.extra?.[category];
+  return t(extra && t(extra) !== extra ? extra : category === "one" ? forms.one : forms.other, values);
+};
+export const CHANGES_RECEIVED = { one: tr("{count} change received"), other: tr("{count} changes received"), extra: { few: tr("{count} changes received#few") } };
+const NOTES_MERGED = { one: tr("{count} note merged"), other: tr("{count} notes merged"), extra: { few: tr("{count} notes merged#few") } };
+const NOTES_EDITED = { one: tr("{count} note edited on both devices"), other: tr("{count} notes edited on both devices"), extra: { few: tr("{count} notes edited on both devices#few") } };
+const IMAGES_RECEIVED = { one: tr("{count} image received"), other: tr("{count} images received"), extra: { few: tr("{count} images received#few") } };
+const IMAGES_SENT = { one: tr("{count} image sent"), other: tr("{count} images sent"), extra: { few: tr("{count} images sent#few") } };
+const OTHER_DEVICES = { one: tr(" + {count} other"), other: tr(" + {count} others"), extra: { few: tr(" + {count} others#few") } };
+
 // No client id and no client secret live here any more. As of API 1.7 Core
 // owns both, together with the scope they may ask for, and this plugin names
 // a provider instead (see PROVIDER below). That is not tidiness: a command
@@ -380,6 +400,11 @@ export async function digestOf(value) {
 // Simple. This file is the source; `node scripts/sync-merge-inline.mjs`
 // copies it into both main.js files between the sync-merge markers, and both
 // self-checks fail when a copy drifts. Pure: no imports, no outside names.
+
+// I18N (Hive #28): marks a notice sentence that mergeNotice() passes to t()
+// later, so scripts/plugin-locale-check.mjs sees it. A function declaration on
+// purpose: main.js code above the inlined block uses it too.
+function tr(key) { return key; }
 
 /** Same as LIMITS.title in main.js; a conflict copy's title is cut to it. */
 export const MERGE_TITLE_LIMIT = 4_000;
@@ -1930,18 +1955,18 @@ export async function pushLineage(lin, objects, deviceName) {
 /** Core cuts a notice at 300 characters; a combined one stays under it. */
 const NOTICE_CAP = 300;
 const NOTICE = {
-  restored: "Sync brought back '{title}': it was edited on {device} after you deleted it.",
-  "kept-edit": "Sync kept your edit to '{title}': it had been deleted on {device}.",
-  "edit-in-trash": "Sync kept your edit to '{title}', but {device} moved it to the trash.",
-  moved: "'{title}' was moved on {device} too; that placement was kept.",
-  archived: "'{title}' was archived or unarchived on {device} too; that change was kept.",
-  copy: "'{title}' was changed on {device} too, so Sync kept your version as '{copy}'.",
-  theirs: "'{title}' was changed on {device} too, so Sync kept that version as '{copy}'.",
+  restored: tr("Sync brought back '{title}': it was edited on {device} after you deleted it."),
+  "kept-edit": tr("Sync kept your edit to '{title}': it had been deleted on {device}."),
+  "edit-in-trash": tr("Sync kept your edit to '{title}', but {device} moved it to the trash."),
+  moved: tr("'{title}' was moved on {device} too; that placement was kept."),
+  archived: tr("'{title}' was archived or unarchived on {device} too; that change was kept."),
+  copy: tr("'{title}' was changed on {device} too, so Sync kept your version as '{copy}'."),
+  theirs: tr("'{title}' was changed on {device} too, so Sync kept that version as '{copy}'."),
 };
 // SYNC-NOTICE fix round 2 (Hive #20): several copies of one note from one device are one sentence.
 const NOTICE_MANY = {
-  copy: "'{title}' was changed on {device} too, so Sync kept your versions as {count} conflict copies, such as '{copy}'.",
-  theirs: "'{title}' was changed on {device} too, so Sync kept those versions as {count} conflict copies, such as '{copy}'.",
+  copy: tr("'{title}' was changed on {device} too, so Sync kept your versions as {count} conflict copies, such as '{copy}'."),
+  theirs: tr("'{title}' was changed on {device} too, so Sync kept those versions as {count} conflict copies, such as '{copy}'."),
 };
 
 /** One notice for a cycle's merge events: { message, id, left } (id: the note to open, or null;
@@ -2053,7 +2078,7 @@ class Google {
   async token() {
     if (this.accessToken && Date.now() < this.expiresAt - 60_000) return this.accessToken;
     const refresh = this.refreshToken;
-    if (!refresh) throw new Error("Not signed in to Google.");
+    if (!refresh) throw new Error(t("Not signed in to Google."));
     // The refresh exchange needs the client secret, which now lives in Core.
     let granted;
     try {
@@ -2069,7 +2094,7 @@ class Google {
       // revoked in their Google account.
       this.storage.delete("refreshToken");
       this.accessToken = null;
-      throw new Error(`Google would not renew this device's access, so it has been signed out. Sign in again. (${error.message || error})`);
+      throw new Error(t("Google would not renew this device's access, so it has been signed out. Sign in again. ({reason})", { reason: error.message || error }));
     }
     this.accessToken = granted.accessToken;
     this.expiresAt = Date.now() + (granted.expiresIn || 3600) * 1000;
@@ -2243,15 +2268,13 @@ export class SharedFolder {
 
 // ------------------------------------------------------------------ the sync
 
-const plural = (count, word) => `${count} ${word}${count === 1 ? "" : "s"}`;
-
 export class Sync {
   constructor(context) {
     this.context = context;
     this.remote = new Google(context.storage, context.oauth);
     this.applying = false;
     this.openObjectId = null;
-    this.status = { state: "idle", text: "Never synchronised." };
+    this.status = { state: "idle", text: t("Never synchronised.") };
     this.listeners = new Set();
   }
 
@@ -2294,7 +2317,7 @@ export class Sync {
       const left = new Set(notice.left ?? []);
       const copyIds = [...new Set([...pending.values()].filter(e=>e.kind === "copy" && e.copyId && !left.has(e)).map(e=>e.copyId))];
       const action = copyIds.length && typeof context.ui.openSyncConflicts === "function"
-        ? { label: t(copyIds.length === 1 ? "Resolve conflict" : "Review conflicts"), onSelect: () => context.ui.openSyncConflicts(copyIds.length === 1 ? copyIds[0] : undefined) }
+        ? { label: copyIds.length === 1 ? t("Resolve conflict") : t("Review conflicts"), onSelect: () => context.ui.openSyncConflicts(copyIds.length === 1 ? copyIds[0] : undefined) }
         : notice.id
         ? { label: t("Open"), onSelect: () => context.ui.openObject(notice.id) }
         : { label: t("Details"), onSelect: () => context.ui.openPluginSettings("notible.sync.simple") };
@@ -2338,7 +2361,7 @@ export class Sync {
     // Read back either way: our own upload may have lost a race with a
     // device that listed at the same instant.
     const winner = keyFileWinner(await this.remote.list(folder));
-    if (!winner) throw new Error("The key file could not be created on your Drive.");
+    if (!winner) throw new Error(t("The key file could not be created on your Drive."));
     const text = dec.decode(await this.remote.download(winner.id));
     const bytes = decodeKey(text);
     this.context.storage.set("key", encodeKey(bytes));
@@ -2398,7 +2421,7 @@ export class Sync {
       } catch (error) {
         // The likeliest cause by far: the user has not switched image
         // reading on. Say it once, not once per file.
-        notes.push(`images not sent: ${error.message}`);
+        notes.push(t("images not sent: {reason}", { reason: error.message }));
         break;
       }
     }
@@ -2414,7 +2437,7 @@ export class Sync {
     // merges already committed when a later step (export, media, upload) fails.
     const events = [];
     try {
-      this.setStatus("busy", "Synchronising…");
+      this.setStatus("busy", t("Synchronising…"));
       const key = await this.ensureKey();
       const local = await this.context.data.sync.export();
       // Snapshots only: the key file lives in this folder too, and feeding it
@@ -2525,15 +2548,15 @@ export class Sync {
       // One short line; every per-note sentence goes to `notes`, which the
       // panel folds away. Joined into this line they grew to a wall of text.
       const detail = [
-        pulled ? plural(pulled, "change") + " received" : null,
-        merged ? plural(merged, "note") + " merged" : null,
-        pushed ? "this device's changes sent" : null,
-        conflicts ? `${plural(conflicts, "note")} edited on both devices` : null,
-        media.pulled ? plural(media.pulled, "image") + " received" : null,
-        media.pushed ? plural(media.pushed, "image") + " sent" : null,
-        skipped ? `${skipped} held back until you close the open note` : null,
+        pulled ? pluralText(t, CHANGES_RECEIVED, pulled, this.context.i18n?.locale, { count: pulled }) : null,
+        merged ? pluralText(t, NOTES_MERGED, merged, this.context.i18n?.locale, { count: merged }) : null,
+        pushed ? t("this device's changes sent") : null,
+        conflicts ? pluralText(t, NOTES_EDITED, conflicts, this.context.i18n?.locale, { count: conflicts }) : null,
+        media.pulled ? pluralText(t, IMAGES_RECEIVED, media.pulled, this.context.i18n?.locale, { count: media.pulled }) : null,
+        media.pushed ? pluralText(t, IMAGES_SENT, media.pushed, this.context.i18n?.locale, { count: media.pushed }) : null,
+        skipped ? t("{count} held back until you close the open note", { count: skipped }) : null,
       ].filter(Boolean).join(" · ");
-      this.setStatus("ok", detail || "Nothing new on either side", notes);
+      this.setStatus("ok", detail || t("Nothing new on either side"), notes);
       return { pulled, skipped, notes, events, media, pushed, conflicts };
     } catch (error) {
       this.setStatus("error", error.message || String(error));
@@ -2714,7 +2737,7 @@ function when(timestamp) {
 function mountPanel(sync, container) {
   const root = element("div", { className: "nsync" });
   root.append(element("style", { textContent: styles }));
-  root.append(element("p", { className: "nsync-lead", textContent: "Keeps this workspace the same on all your devices, through your own Google Drive. Everything is encrypted before it leaves this device." }));
+  root.append(element("p", { className: "nsync-lead", textContent: t("Keeps this workspace the same on all your devices, through your own Google Drive. Everything is encrypted before it leaves this device.") }));
 
   // --- the everyday part: state, the one button, the result. Built once and
   // repainted by `paint`, so a sync finishing never rebuilds what you touch.
@@ -2726,16 +2749,16 @@ function mountPanel(sync, container) {
   const detailsList = element("ul", {});
   const detailsLabel = element("summary", {});
   const details = element("details", { className: "nsync-details" }, [detailsLabel, detailsList]);
-  const now = element("button", { className: "nsync-button--primary", type: "button", textContent: "Synchronise now" });
+  const now = element("button", { className: "nsync-button--primary", type: "button", textContent: t("Synchronise now") });
   now.onclick = async () => {
     now.disabled = true;
     try { await sync.run(); } catch { /* status already shows it */ } finally { paint(sync.status); }
   };
-  const signIn = element("button", { className: "nsync-button--primary", type: "button", textContent: "Sign in with Google" });
+  const signIn = element("button", { className: "nsync-button--primary", type: "button", textContent: t("Sign in with Google") });
   signIn.onclick = async () => {
     signIn.disabled = true;
     status.dataset.state = "busy";
-    status.textContent = "Finish signing in in your browser, then come back here.";
+    status.textContent = t("Finish signing in in your browser, then come back here.");
     try {
       await sync.remote.signIn();
       status.textContent = "";
@@ -2759,22 +2782,22 @@ function mountPanel(sync, container) {
     className: "nsync-device-name",
     type: "text",
     maxLength: 80,
-    placeholder: "e.g. Work laptop",
+    placeholder: t("e.g. Work laptop"),
     value: sync.deviceName(),
   });
   const peerList = element("ul", { className: "nsync-peers" });
   const devicesBody = [
     element("div", { className: "nsync-field" }, [
-      element("label", { htmlFor: "nsync-device-name", textContent: "This device" }),
+      element("label", { htmlFor: "nsync-device-name", textContent: t("This device") }),
       nameInput,
-      element("p", { className: "nsync-hint", textContent: "Your other devices show it under this name." }),
+      element("p", { className: "nsync-hint", textContent: t("Your other devices show it under this name.") }),
     ]),
-    element("div", { className: "nsync-field" }, [element("label", { textContent: "Other devices, and when each last sent its changes" }), peerList]),
+    element("div", { className: "nsync-field" }, [element("label", { textContent: t("Other devices, and when each last sent its changes") }), peerList]),
   ];
   const peers = () => Object.entries(sync.context.storage.get("peers") ?? {});
   const devicesBadgeText = () => {
     const others = peers().length;
-    return `${sync.deviceName() || "This device"}${others ? ` + ${others} other${others === 1 ? "" : "s"}` : ""}`;
+    return `${sync.deviceName() || t("This device")}${others ? pluralText(t, OTHER_DEVICES, others, sync.context.i18n?.locale, { count: others }) : ""}`;
   };
   const badges = {};
   nameInput.onchange = () => {
@@ -2787,17 +2810,17 @@ function mountPanel(sync, container) {
     const lastSync = sync.context.storage.get("lastSync");
     summary.dataset.state = ready ? state : "idle";
     summaryText.textContent = !ready
-      ? "Not set up"
-      : state === "busy" ? "Synchronising…"
-        : state === "error" ? "Sync failed"
-          : lastSync ? `Synced · ${when(lastSync)}` : "Not synchronised yet";
+      ? t("Not set up")
+      : state === "busy" ? t("Synchronising…")
+        : state === "error" ? t("Sync failed")
+          : lastSync ? `Synced · ${when(lastSync)}` : t("Not synchronised yet");
     now.disabled = !ready || state === "busy";
     if (ready) {
       status.dataset.state = state;
       status.textContent = state === "ok" || state === "error"
         ? text
         : state === "idle" && !lastSync
-          ? "The first run uploads this device’s workspace and downloads the others. Nothing is merged or deleted automatically."
+          ? t("The first run uploads this device’s workspace and downloads the others. Nothing is merged or deleted automatically.")
           : "";
     }
     details.hidden = !ready || !notes.length;
@@ -2809,11 +2832,11 @@ function mountPanel(sync, container) {
       ? list
         .sort((a, b) => (b[1].writtenAt ?? 0) - (a[1].writtenAt ?? 0))
         .map(([id, peer]) => element("li", {
-          textContent: `${peer.name || `Unnamed device · ${id.slice(0, 6)}`} — ${peer.writtenAt ? when(peer.writtenAt) : "unknown (older plugin version)"}`,
+          textContent: `${peer.name || t("Unnamed device · {id}", { id: id.slice(0, 6) })} — ${peer.writtenAt ? when(peer.writtenAt) : t("unknown (older plugin version)")}`,
         }))
-      : [element("li", { className: "nsync-hint", textContent: "None seen yet." })]));
+      : [element("li", { className: "nsync-hint", textContent: t("None seen yet.") })]));
     if (badges.devices) badges.devices.textContent = devicesBadgeText();
-    if (badges.key) badges.key.textContent = sync.context.storage.get("key") ? "Kept on your Drive" : "Created on first sync";
+    if (badges.key) badges.key.textContent = sync.context.storage.get("key") ? t("Kept on your Drive") : t("Created on first sync");
   };
 
   // Rows are folded by default and remember being opened across re-renders.
@@ -2835,24 +2858,24 @@ function mountPanel(sync, container) {
     nowRow.replaceChildren(signedIn ? now : signIn);
     if (!signedIn) {
       status.dataset.state = "idle";
-      status.textContent = "Snapshots are encrypted before they leave this device, with a key kept in a folder on the same Drive.";
+      status.textContent = t("Snapshots are encrypted before they leave this device, with a key kept in a folder on the same Drive.");
     }
     rows.replaceChildren();
 
     if (signedIn) {
-      const [accountRow, , account] = row("account", "Google account", "Connected");
-      const out = element("button", { className: "nsync-button--danger", type: "button", textContent: "Sign out and revoke access" });
+      const [accountRow, , account] = row("account", t("Google account"), t("Connected"));
+      const out = element("button", { className: "nsync-button--danger", type: "button", textContent: t("Sign out and revoke access") });
       out.onclick = async () => { await sync.remote.signOut(); await sync.forgetLineage(); render(); paint(sync.status); };
       account.append(
         element("p", {
-          textContent: `Snapshots are kept in the “${FOLDER_NAME}” folder on your Drive.`,
-          title: "Pasted images go in its “media” subfolder, and only travel while Settings → Files & links → “Let plugins read pasted images” is on. Notes sync either way.",
+          textContent: t("Snapshots are kept in the “{folder}” folder on your Drive.", { folder: FOLDER_NAME }),
+          title: t("Pasted images go in its “media” subfolder, and only travel while Settings → Files & links → “Let plugins read pasted images” is on. Notes sync either way."),
         }),
         element("div", { className: "nsync-actions" }, [out]),
       );
       rows.append(accountRow);
 
-      const [devicesRow, devicesBadge, devices] = row("devices", "Devices", devicesBadgeText());
+      const [devicesRow, devicesBadge, devices] = row("devices", t("Devices"), devicesBadgeText());
       badges.devices = devicesBadge;
       devices.append(...devicesBody);
       rows.append(devicesRow);
@@ -2860,7 +2883,7 @@ function mountPanel(sync, container) {
       badges.devices = null;
     }
 
-    const [autoRow, autoBadge, auto] = row("auto", "Automatic sync", "");
+    const [autoRow, autoBadge, auto] = row("auto", t("Automatic sync"), "");
     const toggle = element("input", { id: "nsync-auto-toggle", type: "checkbox", checked: sync.context.storage.get("auto") ?? true });
     const every = element("input", {
       type: "number", min: "1", max: "1440", inputmode: "numeric",
@@ -2868,7 +2891,7 @@ function mountPanel(sync, container) {
     });
     const paintAuto = () => {
       every.disabled = !toggle.checked;
-      autoBadge.textContent = toggle.checked ? `Every ${sync.context.storage.get("intervalMinutes") ?? DEFAULT_INTERVAL_MINUTES} min` : "Off";
+      autoBadge.textContent = toggle.checked ? t("Every {count} min", { count: sync.context.storage.get("intervalMinutes") ?? DEFAULT_INTERVAL_MINUTES }) : t("Off");
     };
     const persist = () => {
       sync.context.storage.set("auto", toggle.checked);
@@ -2883,11 +2906,11 @@ function mountPanel(sync, container) {
     auto.append(
       element("div", { className: "nsync-schedule" }, [
         switchFor(toggle),
-        element("label", { htmlFor: "nsync-auto-toggle", textContent: "Synchronise automatically, at least every" }),
+        element("label", { htmlFor: "nsync-auto-toggle", textContent: t("Synchronise automatically, at least every") }),
         every,
-        element("span", { textContent: "minutes" }),
+        element("span", { textContent: t("minutes") }),
       ]),
-      element("p", { className: "nsync-hint", textContent: "Also runs when Notible starts and a minute after you change something." }),
+      element("p", { className: "nsync-hint", textContent: t("Also runs when Notible starts and a minute after you change something.") }),
     );
     rows.append(autoRow);
 
@@ -2898,9 +2921,9 @@ function mountPanel(sync, container) {
     const notices = element("input", { id: "nsync-notices-toggle", type: "checkbox", checked: sync.context.storage.get("mergeNotices") ?? true });
     notices.onchange = () => {
       sync.context.storage.set("mergeNotices", notices.checked);
-      noticeBadge.textContent = tr(notices.checked ? "On" : "Off");
+      noticeBadge.textContent = (notices.checked ? tr("On") : tr("Off"));
     };
-    noticeBadge.textContent = tr(notices.checked ? "On" : "Off");
+    noticeBadge.textContent = (notices.checked ? tr("On") : tr("Off"));
     noticeBox.append(
       element("div", { className: "nsync-schedule" }, [
         switchFor(notices),
@@ -2913,19 +2936,19 @@ function mountPanel(sync, container) {
     // The price of this mode. Folded like every row (per user request), but
     // whenever it is open it states the whole cost, and the red line is the
     // first thing in it, so "does not protect" never reads as "protects".
-    const [priceRow, keyBadge, price] = row("key", "Encryption key", "");
+    const [priceRow, keyBadge, price] = row("key", t("Encryption key"), "");
     badges.key = keyBadge;
     const warning = element("details", { className: "nsync-warning" });
     warning.append(
-      element("summary", { textContent: "This does not protect your notes from anyone who can open this Google account." }),
-      element("div", { className: "nsync-step__body" }, [element("p", { textContent: "Anyone who signs in — Google included — has exactly what your devices have. They can read your notes, add to them, roll your edits back, and permanently delete notes on every device, with no copy left on the other machine to restore from. This covers the snapshots already on your Drive." }),
+      element("summary", { textContent: t("This does not protect your notes from anyone who can open this Google account.") }),
+      element("div", { className: "nsync-step__body" }, [element("p", { textContent: t("Anyone who signs in — Google included — has exactly what your devices have. They can read your notes, add to them, roll your edits back, and permanently delete notes on every device, with no copy left on the other machine to restore from. This covers the snapshots already on your Drive.") }),
       element("p", { textContent: "Uninstalling does not undo it: a key that has been on Drive stays in the trash, in version history, and on every device that fetched it. Notible has no server and sees nothing, so the trust moved to Google; it was not removed." }),
-      element("p", { textContent: "Want the key to stay on your own devices? Install “Notible Sync” instead: it pairs devices with a key you carry across yourself." }),
+      element("p", { textContent: t("Want the key to stay on your own devices? Install “Notible Sync” instead: it pairs devices with a key you carry across yourself.") }),
       ]),
     );
     price.append(
       warning,
-      element("p", { textContent: "The key sits next to the snapshots, so any device signed in to this Google account synchronises with no setup." }),
+      element("p", { textContent: t("The key sits next to the snapshots, so any device signed in to this Google account synchronises with no setup.") }),
     );
     rows.append(priceRow);
     paint(sync.status);
@@ -2947,7 +2970,7 @@ export default {
   manifest: {
     id: "notible.sync.simple",
     name: "Notible Sync Simple",
-    version: "0.5.8",
+    version: "0.5.9",
     apiVersion: "1.26",
     description: "Keep this workspace the same on your own computers through Google Drive, without pairing them. The key is kept on your Drive, so anyone who can sign in to that Google account can read the workspace.",
     author: "Notible",
@@ -2955,6 +2978,8 @@ export default {
   },
 
   onload(context) {
+
+    if (context.i18n?.t) t = (key, values) => context.i18n.t(key, values);
     const sync = new Sync(context);
     this._sync = sync;
     // SYNC-TRANSPORT (Hive #9): in an agent sandbox with a shared folder,
@@ -2979,14 +3004,14 @@ export default {
     // user picks this row — not on the empty Plugins screen for everyone.
     this._disposables.push(context.settings.register({
       id: "sync",
-      title: "Account & sync",
+      title: t("Account & sync"),
       mount: ({ container }) => mountPanel(sync, container),
     }));
 
     this._disposables.push(context.commands.register({
       id: "now",
-      name: "Simple Sync: sync now",
-      description: "Push this device's snapshot and take in the others.",
+      name: t("Simple Sync: sync now"),
+      description: t("Push this device's snapshot and take in the others."),
       execute: () => sync.run(),
     }));
 
