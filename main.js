@@ -731,7 +731,7 @@ export function planConflicts(remoteObjects, localById, bases, tableBases, copyL
         events.push({ kind: "copy", id: remote.id, title, copy: copy.title, copyId: copy.id, mine: true });
       }
       notes.push(merged.conflicts
-        ? `"${title}": merged edits from both devices; ${merged.conflicts} cell(s) changed on both, newer kept${merged.localLost ? ", this device's version saved as a conflict copy" : ""}.`
+        ? `"${title}": merged edits from both devices; ${merged.conflicts} cell${merged.conflicts === 1 ? "" : "s"} changed on both, newer kept${merged.localLost ? ", this device's version saved as a conflict copy" : ""}.`
         : `"${title}": merged edits from both devices.`);
       continue;
     }
@@ -750,7 +750,7 @@ export function planConflicts(remoteObjects, localById, bases, tableBases, copyL
         events.push({ kind: "copy", id: remote.id, title, copy: copy.title, copyId: copy.id, mine: true });
       }
       notes.push(embedded.conflicts
-        ? `"${title}": merged table edits from both devices; ${embedded.conflicts} cell(s) changed on both, newer kept${embedded.localLost ? ", this device's version saved as a conflict copy" : ""}.`
+        ? `"${title}": merged table edits from both devices; ${embedded.conflicts} cell${embedded.conflicts === 1 ? "" : "s"} changed on both, newer kept${embedded.localLost ? ", this device's version saved as a conflict copy" : ""}.`
         : `"${title}": merged table edits from both devices.`);
       continue;
     }
@@ -2492,7 +2492,7 @@ export class Sync {
             name: validated.deviceName || peers[validated.deviceId]?.name || "",
             writtenAt: validated.writtenAt,
           };
-          if (validated.rejected.length) notes.push(`${file.name}: skipped ${validated.rejected.length} object(s)`);
+          if (validated.rejected.length) notes.push(`${file.name}: skipped ${validated.rejected.length} object${validated.rejected.length === 1 ? "" : "s"}`);
           const { apply, deferred } = planApply(validated, this.openObjectId);
           skipped += deferred.length;
           const result = await pullPeer(lin, io, {
@@ -2970,7 +2970,7 @@ export default {
   manifest: {
     id: "notible.sync.simple",
     name: "Notible Sync Simple",
-    version: "0.5.9",
+    version: "0.5.10",
     apiVersion: "1.26",
     description: "Keep this workspace the same on your own computers through Google Drive, without pairing them. The key is kept on your Drive, so anyone who can sign in to that Google account can read the workspace.",
     author: "Notible",

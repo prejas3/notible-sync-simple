@@ -385,4 +385,18 @@ await checkSharedFolder(SharedFolder);
   assert.equal(pluralText(translate("en"), CHANGES_RECEIVED, 2, "pl", { count: 2 }), show("{count} changes received", 2), "an old Core (t returns the key) shows English");
 }
 
+// I18N (Hive #56): the merge notes count cells in English, inline (not via t()).
+{
+  const table = (id, props, updated_at) => ({ id, type: "table", title: "T", content: "", props, created_at: 1, updated_at, archived_at: null, trashed_at: null, parent_id: null });
+  const cols = [{ id: "c1", name: "A", type: "text" }, { id: "c2", name: "B", type: "text" }];
+  const rowsWith = (cells) => JSON.stringify({ columns: cols, rows: [{ id: "r1", cells }] });
+  const base = rowsWith({ c1: "a", c2: "b" });
+  for (const [n, word] of [[1, "1 cell changed on both"], [2, "2 cells changed on both"]]) {
+    const mine = Object.fromEntries(["c1", "c2"].map((c, i) => [c, i < n ? "L" : { c1: "a", c2: "b" }[c]]));
+    const theirs = Object.fromEntries(["c1", "c2"].map((c, i) => [c, i < n ? "R" : { c1: "a", c2: "b" }[c]]));
+    const out = planConflicts([table("t", rowsWith(theirs), 3)], new Map([["t", table("t", rowsWith(mine), 2)]]), {}, { t: base }, "Home");
+    assert.ok(out.notes[0].includes(word), `cell wording for ${n}: ${out.notes[0]}`);
+  }
+}
+
 console.log("Notible Sync Simple self-check passed.");
